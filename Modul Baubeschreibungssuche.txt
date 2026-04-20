@@ -1,0 +1,1292 @@
+Option Explicit
+
+' =========================================================
+' API / Windows
+' =========================================================
+#If VBA7 Then
+    Public Declare PtrSafe Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+    Public Declare PtrSafe Function FindWindowA Lib "user32" (ByVal lpClassName As String, ByVal lpWindowName As String) As LongPtr
+    Public Declare PtrSafe Function SetWindowPos Lib "user32" (ByVal hwnd As LongPtr, ByVal hWndInsertAfter As LongPtr, ByVal X As Long, ByVal y As Long, ByVal cx As Long, ByVal cy As Long, ByVal uFlags As Long) As Long
+    Public Declare PtrSafe Function SetForegroundWindow Lib "user32" (ByVal hwnd As LongPtr) As Long
+#Else
+    Public Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+    Public Declare Function FindWindowA Lib "user32" (ByVal lpClassName As String, ByVal lpWindowName As String) As Long
+    Public Declare Function SetWindowPos Lib "user32" (ByVal hwnd As Long, ByVal hWndInsertAfter As Long, ByVal X As Long, ByVal Y As Long, ByVal cx As Long, ByVal cy As Long, ByVal uFlags As Long) As Long
+    Public Declare Function SetForegroundWindow Lib "user32" (ByVal hwnd As Long) As Long
+#End If
+
+Private Const HWND_TOPMOST As Long = -1
+Private Const SWP_NOMOVE As Long = &H2
+Private Const SWP_NOSIZE As Long = &H1
+Private Const SWP_SHOWWINDOW As Long = &H40
+
+Private Const BS_ITEM_SEP As String = "<<<BS_ITEM_SEP>>>"
+Private Const BS_TOP_TOLERANCE As Double = 4
+Private Const BS_LINE_GAP_FOR_BLANK As Double = 18
+Private Const BS_PIXELS_PER_CHAR As Double = 7
+
+' =========================================================
+' SAP OBJEKTE
+' =========================================================
+Private gSapGuiAuto As Object
+Private gSapApp As Object
+Private gSapConnection As Object
+Private gSapSession As Object
+
+' =========================================================
+' KONFIGURATION
+' =========================================================
+Private Const CFG_TRANSACTION As String = "/nzp43"
+Private Const CFG_WERK As String = "0028"
+Private Const CFG_FIND_LIMIT As String = "999"
+
+Private Const CFG_P_FLTFKT As Boolean = True
+
+' =========================================================
+' GLOBALE WERTE
+' =========================================================
+Public gBS_FormConfirmed As Boolean
+Public gBS_BBInputText As String
+Public gBS_SearchText As String
+Public gBS_FilterActive As Boolean
+Public gBS_FilterText As String
+
+Public gBS_IsPaused As Boolean
+Public gBS_StopRequested As Boolean
+Public gBS_RunStarted As Boolean
+
+Public gBS_ResultText As String
+
+' =========================================================
+' HAUPTMAKRO
+' =========================================================
+Public Sub Baubeschreibungssuche()
+
+    Dim session As Object
+    Dim bbList As Collection
+    Dim resultItems As Collection
+    
+    Dim i As Long
+    Dim bb As String
+    Dim found As Boolean
+    Dim resultText As String
+    Dim rawEntry As String
+    
+    On Error GoTo fehler
+    
+    BS_ResetGlobals
+    
+    Load Baubeschreibungssuche1
+    Baubeschreibungssuche1.Show vbModal
+    
+    If gBS_FormConfirmed = False Then Exit Sub
+    
+    Set bbList = BS_ParseBBNumbers(gBS_BBInputText)
+    If bbList Is Nothing Then Exit Sub
+    
+    If bbList.Count = 0 Then
+        MsgBox "Es wurden keine gültigen BB-Nummern erkannt.", vbExclamation, "Keine BB-Nummern"
+        Exit Sub
+    End If
+    
+    Set session = BS_GetSapSession()
+    If session Is Nothing Then Exit Sub
+    
+    gBS_RunStarted = True
+    
+    Load Baubeschreibungssuche2
+    Baubeschreibungssuche2.Show vbModeless
+    BS_UpdateStatus "SAP wird vorbereitet..."
+    DoEvents
+    
+    Set resultItems = New Collection
+    
+    session.findById("wnd[0]").maximize
+    BS_OpenTransaction session, CFG_TRANSACTION
+    BS_ApplySelectionSettings session
+    
+    For i = 1 To bbList.Count
+        
+        bb = CStr(bbList(i))
+        
+        BS_ProcessUserControl "Bearbeite " & i & " / " & bbList.Count & " : " & bb
+        
+        BS_ReturnToSelection session
+        
+        BS_ProcessUserControl "Setze BB-Nummer: " & bb
+        BS_SetText session, "wnd[0]/usr/ctxtP_FZGID", bb, True
+        
+        BS_ProcessUserControl "Öffne Baubeschreibung für " & bb
+        session.findById("wnd[0]/tbar[1]/btn[8]").Press
+        BS_WaitSap session
+        
+        If BS_IsNoData(BS_GetStatusBarText(session)) Then
+            found = False
+            resultText = BS_Nvl(BS_GetStatusBarText(session), "Keine Daten / kein Ergebnis verfügbar.")
+        Else
+            BS_ProcessUserControl "Suche in " & bb & " nach """ & gBS_SearchText & """"
+            BS_RunFind session, gBS_SearchText, found, resultText
+        End If
+        
+        rawEntry = BS_BuildRawResultEntry(bb, found, resultText)
+        resultItems.Add rawEntry
+        
+        BS_CloseExtraWindows session
+        BS_ReturnToSelection session
+    Next i
+    
+    gBS_ResultText = BS_BuildResultText(resultItems)
+    
+    gBS_RunStarted = False
+    BS_CloseRunningForm
+    BS_BringExcelToFront
+    
+    Load Baubeschreibungssuche3
+    Baubeschreibungssuche3.SetResultText gBS_ResultText
+    Baubeschreibungssuche3.Show vbModal
+    
+SauberBeenden:
+    gBS_RunStarted = False
+    gBS_IsPaused = False
+    gBS_StopRequested = False
+    BS_CloseRunningForm
+    BS_BringExcelToFront
+    Exit Sub
+
+fehler:
+    gBS_RunStarted = False
+    BS_CloseRunningForm
+    BS_BringExcelToFront
+    
+    If Err.Number <> 0 Then
+        MsgBox "Makrofehler:" & vbCrLf & _
+               "Nr. " & Err.Number & vbCrLf & _
+               Err.Description, vbCritical, "Baubeschreibungssuche"
+    End If
+End Sub
+
+' =========================================================
+' TESTMAKRO NUR FÜR SAP-VERBINDUNG
+' =========================================================
+Public Sub Teste_SAP_Verbindung_Baubeschreibung()
+
+    Dim session As Object
+    Dim infoText As String
+    
+    Set session = BS_GetSapSession()
+    If session Is Nothing Then Exit Sub
+    
+    On Error Resume Next
+    infoText = "SAP-Verbindung erfolgreich." & vbCrLf & vbCrLf & _
+               "Systemname: " & session.Info.SystemName & vbCrLf & _
+               "Client: " & session.Info.Client & vbCrLf & _
+               "Transaktion: " & session.Info.Transaction
+    On Error GoTo 0
+    
+    MsgBox infoText, vbInformation, "SAP-Test erfolgreich"
+End Sub
+
+' =========================================================
+' RESET
+' =========================================================
+Private Sub BS_ResetGlobals()
+    gBS_FormConfirmed = False
+    gBS_BBInputText = ""
+    gBS_SearchText = ""
+    gBS_FilterActive = False
+    gBS_FilterText = ""
+    
+    gBS_IsPaused = False
+    gBS_StopRequested = False
+    gBS_RunStarted = False
+    
+    gBS_ResultText = ""
+End Sub
+
+' =========================================================
+' SAP SESSION
+' =========================================================
+Private Function BS_GetSapSession() As Object
+    
+    Dim rotWrapper As Object
+    Dim rotEntry As Object
+    
+    On Error GoTo fehler
+    
+    Set gSapGuiAuto = Nothing
+    Set gSapApp = Nothing
+    Set gSapConnection = Nothing
+    Set gSapSession = Nothing
+    
+    On Error Resume Next
+    Set gSapGuiAuto = GetObject("SAPGUI")
+    On Error GoTo fehler
+    
+    If gSapGuiAuto Is Nothing Then
+        On Error Resume Next
+        Set rotWrapper = CreateObject("SapROTWr.SapROTWrapper")
+        If Not rotWrapper Is Nothing Then
+            Set rotEntry = rotWrapper.GetROTEntry("SAPGUI")
+            If Not rotEntry Is Nothing Then
+                Set gSapGuiAuto = rotEntry
+            End If
+        End If
+        On Error GoTo fehler
+    End If
+    
+    If gSapGuiAuto Is Nothing Then
+        MsgBox "SAP GUI wurde nicht gefunden." & vbCrLf & vbCrLf & _
+               "Bitte prüfen:" & vbCrLf & _
+               "- SAP ist wirklich geöffnet" & vbCrLf & _
+               "- Mindestens ein SAP-Fenster ist offen" & vbCrLf & _
+               "- Excel und SAP laufen mit denselben Rechten", _
+               vbCritical, "SAP nicht gefunden"
+        Exit Function
+    End If
+    
+    On Error Resume Next
+    Set gSapApp = gSapGuiAuto.GetScriptingEngine
+    On Error GoTo fehler
+    
+    If gSapApp Is Nothing Then
+        MsgBox "Die SAP Scripting Engine konnte nicht geladen werden." & vbCrLf & vbCrLf & _
+               "Wahrscheinlich ist SAP GUI Scripting deaktiviert.", _
+               vbCritical, "SAP Scripting"
+        Exit Function
+    End If
+    
+    If gSapApp.Children.Count = 0 Then
+        MsgBox "Es wurde keine SAP-Verbindung gefunden." & vbCrLf & vbCrLf & _
+               "Bitte zuerst in ein SAP-System einloggen.", _
+               vbExclamation, "Keine SAP-Verbindung"
+        Exit Function
+    End If
+    
+    Set gSapConnection = gSapApp.Children(0)
+    If gSapConnection Is Nothing Then
+        MsgBox "SAP-Verbindung 0 konnte nicht gelesen werden.", vbCritical, "SAP-Verbindung"
+        Exit Function
+    End If
+    
+    If gSapConnection.Children.Count = 0 Then
+        MsgBox "In der gefundenen SAP-Verbindung ist keine Sitzung offen." & vbCrLf & vbCrLf & _
+               "Bitte eine SAP-Sitzung öffnen und erneut starten.", _
+               vbExclamation, "Keine SAP-Sitzung"
+        Exit Function
+    End If
+    
+    Set gSapSession = gSapConnection.Children(0)
+    If gSapSession Is Nothing Then
+        MsgBox "SAP-Sitzung 0 konnte nicht gelesen werden.", vbCritical, "SAP-Sitzung"
+        Exit Function
+    End If
+    
+    Set BS_GetSapSession = gSapSession
+    Exit Function
+
+fehler:
+    Set gSapGuiAuto = Nothing
+    Set gSapApp = Nothing
+    Set gSapConnection = Nothing
+    Set gSapSession = Nothing
+    
+    MsgBox "SAP-Sitzung konnte nicht verbunden werden." & vbCrLf & vbCrLf & _
+           "Fehler: " & Err.Number & " - " & Err.Description & vbCrLf & vbCrLf & _
+           "Bitte prüfen:" & vbCrLf & _
+           "- SAP ist offen und eingeloggt" & vbCrLf & _
+           "- SAP GUI Scripting ist aktiviert" & vbCrLf & _
+           "- Excel und SAP mit denselben Rechten gestartet", _
+           vbCritical, "SAP-Verbindung fehlgeschlagen"
+End Function
+
+Private Sub BS_OpenTransaction(ByVal session As Object, ByVal transactionCode As String)
+    BS_ProcessUserControl "Öffne Transaktion " & transactionCode & "..."
+    session.findById("wnd[0]/tbar[0]/okcd").text = transactionCode
+    session.findById("wnd[0]").sendVKey 0
+    BS_WaitSap session
+End Sub
+
+' =========================================================
+' EINSTELLUNGEN AUF DER SELEKTIONSMASKE
+' =========================================================
+Private Sub BS_ApplySelectionSettings(ByVal session As Object)
+
+    BS_ProcessUserControl "Setze Selektions-Einstellungen..."
+    
+    BS_SetCheck session, "wnd[0]/usr/chkP_DBRLP", True, True
+    BS_SetText session, "wnd[0]/usr/ctxtP_WERK", CFG_WERK, True
+    BS_SetText session, "wnd[0]/usr/ctxtP_SDAUF", "", False
+    BS_SetText session, "wnd[0]/usr/ctxtSL_BERE-LOW", "", False
+    
+    BS_SetCheck session, "wnd[0]/usr/chkP_SDOMAP", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_PRTOP", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_KSWBL", True, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_BAUGR", True, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_MBSNR", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_HGAUS", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_GRDLT", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_GRDLTE", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_ZCHNR", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_FZGZUS", True, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_VPOSDL", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_MBBPOS", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_MFILT", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_FLTFKT", CFG_P_FLTFKT, False
+    
+    BS_SetRadio session, "wnd[0]/usr/radP_KSWF1", False
+    
+    BS_SetCheck session, "wnd[0]/usr/chkP_MTTLNO", False, False
+    BS_SetText session, "wnd[0]/usr/txtSL_MITTL-LOW", "", False
+    BS_SetCheck session, "wnd[0]/usr/chkP_BCSSL", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_TEST", False, False
+    BS_SetCheck session, "wnd[0]/usr/chkP_BMFILT", True, False
+    
+    BS_WaitSap session
+End Sub
+
+' =========================================================
+' FIND / SUCHLAUF
+' =========================================================
+Private Sub BS_RunFind(ByVal session As Object, ByVal searchTerm As String, ByRef found As Boolean, ByRef resultText As String)
+
+    Dim statusText As String
+    Dim popupText As String
+    Dim activeText As String
+    
+    On Error GoTo fehler
+    
+    found = False
+    resultText = ""
+    
+    session.findById("wnd[0]").sendVKey 71
+    BS_WaitSap session
+    
+    If Not BS_WindowExists(session, 1) Then
+        statusText = BS_GetStatusBarText(session)
+        resultText = BS_Nvl(statusText, "Suchdialog konnte nicht geöffnet werden.")
+        found = False
+        Exit Sub
+    End If
+    
+    BS_SetCheck session, "wnd[1]/usr/chkSCAN_STRING-START", False, False
+    BS_SetCheck session, "wnd[1]/usr/chkSCAN_STRING-RANGE", False, False
+    
+    If BS_ElementExists(session, "wnd[1]/usr/txtRSYSF-STRING") Then
+        session.findById("wnd[1]/usr/txtRSYSF-STRING").text = searchTerm
+    Else
+        Err.Raise vbObjectError + 2001, , "Suchfeld im Suchdialog wurde nicht gefunden."
+    End If
+    
+    If BS_ElementExists(session, "wnd[1]/usr/txtSCAN_STRING-LIMIT") Then
+        session.findById("wnd[1]/usr/txtSCAN_STRING-LIMIT").text = CFG_FIND_LIMIT
+    End If
+    
+    If BS_ElementExists(session, "wnd[1]/tbar[0]/btn[0]") Then
+        session.findById("wnd[1]/tbar[0]/btn[0]").Press
+    Else
+        session.findById("wnd[1]").sendVKey 0
+    End If
+    
+    BS_WaitSap session
+    Sleep 300
+    DoEvents
+    
+    statusText = BS_GetStatusBarText(session)
+    popupText = BS_GetPopupContentStructured(session)
+    activeText = BS_GetActiveWindowContentStructured(session)
+    
+    popupText = BS_KeepFromTrefferHeader(popupText)
+    activeText = BS_KeepFromTrefferHeader(activeText)
+    
+    If Len(popupText) > 0 Then
+        resultText = popupText
+    ElseIf Len(activeText) > 0 Then
+        resultText = activeText
+    ElseIf Len(statusText) > 0 Then
+        resultText = statusText
+    Else
+        resultText = "Keine Rückmeldung von SAP."
+    End If
+    
+    found = BS_HasHit(statusText, popupText, activeText, resultText)
+    Exit Sub
+
+fehler:
+    found = False
+    resultText = "Fehler bei der Suche: " & Err.Description
+End Sub
+
+Private Function BS_HasHit(ByVal statusText As String, ByVal popupText As String, ByVal activeText As String, ByVal combinedText As String) As Boolean
+    
+    Dim allText As String
+    allText = LCase$(statusText & vbCrLf & popupText & vbCrLf & activeText & vbCrLf & combinedText)
+    
+    If BS_IsNegativeSearchText(allText) Then
+        BS_HasHit = False
+        Exit Function
+    End If
+    
+    If Len(popupText) > 0 Then
+        BS_HasHit = True
+        Exit Function
+    End If
+    
+    If Len(activeText) > 0 And InStr(1, activeText, gBS_SearchText, vbTextCompare) > 0 Then
+        BS_HasHit = True
+        Exit Function
+    End If
+    
+    If InStr(allText, "treffer") > 0 Then
+        BS_HasHit = True
+        Exit Function
+    End If
+    
+    If InStr(allText, "gefunden") > 0 Then
+        BS_HasHit = True
+        Exit Function
+    End If
+    
+    If InStr(allText, "found") > 0 Then
+        BS_HasHit = True
+        Exit Function
+    End If
+    
+    BS_HasHit = False
+End Function
+
+Private Function BS_IsNegativeSearchText(ByVal txt As String) As Boolean
+    
+    Dim t As String
+    t = LCase$(txt)
+    
+    BS_IsNegativeSearchText = _
+           InStr(t, "nicht gefunden") > 0 _
+        Or InStr(t, "no hit") > 0 _
+        Or InStr(t, "not found") > 0 _
+        Or InStr(t, "keine treffer") > 0 _
+        Or InStr(t, "0 treffer") > 0 _
+        Or InStr(t, "keine übereinstimmung") > 0 _
+        Or InStr(t, "no match") > 0 _
+        Or InStr(t, "keine daten") > 0 _
+        Or InStr(t, "kein objekt") > 0 _
+        Or InStr(t, "no data") > 0
+End Function
+
+' =========================================================
+' TEXTAUSLESE MIT POSITIONEN
+' =========================================================
+Private Function BS_GetPopupContentStructured(ByVal session As Object) As String
+    
+    Dim i As Long
+    Dim wnd As Object
+    Dim oneWindowText As String
+    Dim fullText As String
+    
+    For i = 1 To BS_GetWindowCount(session) - 1
+        
+        On Error Resume Next
+        Set wnd = session.findById("wnd[" & i & "]")
+        On Error GoTo 0
+        
+        If Not wnd Is Nothing Then
+            oneWindowText = BS_ReadWindowStructured(wnd)
+            
+            If Len(oneWindowText) > 0 Then
+                If Len(fullText) > 0 Then fullText = fullText & vbCrLf & vbCrLf
+                fullText = fullText & oneWindowText
+            End If
+        End If
+        
+        Set wnd = Nothing
+    Next i
+    
+    BS_GetPopupContentStructured = fullText
+End Function
+
+Private Function BS_GetActiveWindowContentStructured(ByVal session As Object) As String
+    
+    Dim wnd As Object
+    
+    On Error Resume Next
+    Set wnd = session.ActiveWindow
+    On Error GoTo 0
+    
+    If wnd Is Nothing Then Exit Function
+    
+    BS_GetActiveWindowContentStructured = BS_ReadWindowStructured(wnd)
+End Function
+
+Private Function BS_ReadWindowStructured(ByVal wnd As Object) As String
+    
+    Dim items As Collection
+    Dim dict As Object
+    Dim arr As Variant
+    
+    Set items = New Collection
+    Set dict = CreateObject("Scripting.Dictionary")
+    
+    BS_CollectNodeTextItems wnd, items, dict
+    
+    If items.Count = 0 Then Exit Function
+    
+    arr = BS_CollectionToArray(items)
+    BS_SortTextItemArray arr
+    
+    BS_ReadWindowStructured = BS_BuildStructuredTextFromArray(arr)
+End Function
+
+Private Sub BS_CollectNodeTextItems(ByVal node As Object, ByRef items As Collection, ByVal dict As Object)
+    
+    Dim objType As String
+    Dim txt As String
+    Dim topPos As Double
+    Dim leftPos As Double
+    Dim childCount As Long
+    Dim i As Long
+    Dim child As Object
+    
+    If node Is Nothing Then Exit Sub
+    
+    objType = BS_GetObjectType(node)
+    txt = BS_GetNodeBestText(node)
+    topPos = BS_GetNodeNumberProperty(node, "Top")
+    leftPos = BS_GetNodeNumberProperty(node, "Left")
+    
+    If Len(txt) > 0 Then
+        If Not BS_ShouldIgnoreNodeText(objType, txt) Then
+            BS_AddTextItem items, dict, txt, topPos, leftPos
+        End If
+    End If
+    
+    childCount = BS_GetChildrenCount(node)
+    If childCount <= 0 Then Exit Sub
+    
+    For i = 0 To childCount - 1
+        On Error Resume Next
+        Set child = node.Children(CLng(i))
+        On Error GoTo 0
+        
+        If Not child Is Nothing Then
+            BS_CollectNodeTextItems child, items, dict
+        End If
+        
+        Set child = Nothing
+    Next i
+End Sub
+
+Private Sub BS_AddTextItem(ByRef items As Collection, ByVal dict As Object, ByVal txt As String, ByVal topPos As Double, ByVal leftPos As Double)
+    
+    Dim lines() As String
+    Dim i As Long
+    Dim oneLine As String
+    Dim lineTop As Double
+    Dim key As String
+    
+    txt = Replace(txt, vbCrLf, vbLf)
+    txt = Replace(txt, vbCr, vbLf)
+    
+    lines = Split(txt, vbLf)
+    
+    For i = LBound(lines) To UBound(lines)
+        oneLine = CStr(lines(i))
+        
+        If Len(oneLine) > 0 Then
+            lineTop = topPos + (i * 16)
+            key = CStr(CLng(lineTop)) & "|" & CStr(CLng(leftPos)) & "|" & oneLine
+            
+            If Not dict.Exists(key) Then
+                dict.Add key, True
+                items.Add BS_MakeTextItem(lineTop, leftPos, oneLine)
+            End If
+        End If
+    Next i
+End Sub
+
+Private Function BS_MakeTextItem(ByVal topPos As Double, ByVal leftPos As Double, ByVal txt As String) As String
+    BS_MakeTextItem = format$(topPos, "0000000.000") & BS_ITEM_SEP & _
+                      format$(leftPos, "0000000.000") & BS_ITEM_SEP & _
+                      txt
+End Function
+
+Private Sub BS_ParseTextItem(ByVal item As String, ByRef topPos As Double, ByRef leftPos As Double, ByRef txt As String)
+    
+    Dim arr() As String
+    
+    arr = Split(item, BS_ITEM_SEP, 3)
+    
+    topPos = 0
+    leftPos = 0
+    txt = ""
+    
+    If UBound(arr) >= 0 Then topPos = CDbl(arr(0))
+    If UBound(arr) >= 1 Then leftPos = CDbl(arr(1))
+    If UBound(arr) >= 2 Then txt = arr(2)
+End Sub
+
+Private Function BS_CollectionToArray(ByVal items As Collection) As Variant
+    
+    Dim arr() As String
+    Dim i As Long
+    
+    ReDim arr(1 To items.Count)
+    
+    For i = 1 To items.Count
+        arr(i) = CStr(items(i))
+    Next i
+    
+    BS_CollectionToArray = arr
+End Function
+
+Private Sub BS_SortTextItemArray(ByRef arr As Variant)
+    
+    Dim i As Long
+    Dim j As Long
+    Dim tmp As String
+    
+    For i = LBound(arr) To UBound(arr) - 1
+        For j = i + 1 To UBound(arr)
+            If BS_CompareTextItems(arr(i), arr(j)) > 0 Then
+                tmp = arr(i)
+                arr(i) = arr(j)
+                arr(j) = tmp
+            End If
+        Next j
+    Next i
+End Sub
+
+Private Function BS_CompareTextItems(ByVal itemA As String, ByVal itemB As String) As Long
+    
+    Dim topA As Double, leftA As Double, txtA As String
+    Dim topB As Double, leftB As Double, txtB As String
+    
+    BS_ParseTextItem itemA, topA, leftA, txtA
+    BS_ParseTextItem itemB, topB, leftB, txtB
+    
+    If Abs(topA - topB) > BS_TOP_TOLERANCE Then
+        If topA < topB Then
+            BS_CompareTextItems = -1
+        Else
+            BS_CompareTextItems = 1
+        End If
+    Else
+        If leftA < leftB Then
+            BS_CompareTextItems = -1
+        ElseIf leftA > leftB Then
+            BS_CompareTextItems = 1
+        Else
+            BS_CompareTextItems = 0
+        End If
+    End If
+End Function
+
+Private Function BS_BuildStructuredTextFromArray(ByVal arr As Variant) As String
+    
+    Dim i As Long
+    Dim topPos As Double, leftPos As Double, txt As String
+    
+    Dim currentRowTop As Double
+    Dim previousRowTop As Double
+    Dim lineText As String
+    Dim resultText As String
+    Dim rowStarted As Boolean
+    
+    For i = LBound(arr) To UBound(arr)
+        
+        BS_ParseTextItem CStr(arr(i)), topPos, leftPos, txt
+        
+        If rowStarted = False Then
+            currentRowTop = topPos
+            previousRowTop = topPos
+            lineText = BS_PlaceTextByLeft("", leftPos, txt)
+            rowStarted = True
+        Else
+            If Abs(topPos - currentRowTop) <= BS_TOP_TOLERANCE Then
+                lineText = BS_PlaceTextByLeft(lineText, leftPos, txt)
+            Else
+                resultText = BS_AppendRenderedLine(resultText, lineText)
+                
+                previousRowTop = currentRowTop
+                currentRowTop = topPos
+                
+                If (currentRowTop - previousRowTop) > BS_LINE_GAP_FOR_BLANK Then
+                    resultText = resultText & vbCrLf
+                End If
+                
+                lineText = BS_PlaceTextByLeft("", leftPos, txt)
+            End If
+        End If
+    Next i
+    
+    If rowStarted Then
+        resultText = BS_AppendRenderedLine(resultText, lineText)
+    End If
+    
+    BS_BuildStructuredTextFromArray = resultText
+End Function
+
+Private Function BS_AppendRenderedLine(ByVal resultText As String, ByVal lineText As String) As String
+    
+    Dim outLine As String
+    
+    outLine = RTrim$(lineText)
+    
+    If Len(resultText) > 0 Then resultText = resultText & vbCrLf
+    resultText = resultText & outLine
+    
+    If InStr(1, outLine, "Anzahl Treffer", vbTextCompare) > 0 Then
+        resultText = resultText & vbCrLf & String(85, "-")
+    End If
+    
+    BS_AppendRenderedLine = resultText
+End Function
+
+Private Function BS_PlaceTextByLeft(ByVal currentLine As String, ByVal leftPos As Double, ByVal txt As String) As String
+    
+    Dim targetCol As Long
+    Dim neededSpaces As Long
+    
+    targetCol = CLng(leftPos / BS_PIXELS_PER_CHAR)
+    If targetCol < 0 Then targetCol = 0
+    
+    If Len(currentLine) = 0 Then
+        currentLine = Space$(targetCol)
+        currentLine = currentLine & txt
+    Else
+        If Len(currentLine) < targetCol Then
+            neededSpaces = targetCol - Len(currentLine)
+            currentLine = currentLine & Space$(neededSpaces)
+        Else
+            If Right$(currentLine, 1) <> " " Then
+                currentLine = currentLine & " "
+            End If
+        End If
+        
+        currentLine = currentLine & txt
+    End If
+    
+    BS_PlaceTextByLeft = currentLine
+End Function
+
+Private Function BS_KeepFromTrefferHeader(ByVal txt As String) As String
+    
+    Dim posTreffer As Long
+    
+    posTreffer = InStr(1, txt, "Anzahl Treffer", vbTextCompare)
+    
+    If posTreffer > 0 Then
+        BS_KeepFromTrefferHeader = Mid$(txt, posTreffer)
+    Else
+        BS_KeepFromTrefferHeader = txt
+    End If
+End Function
+
+Private Function BS_GetNodeBestText(ByVal node As Object) As String
+    
+    Dim s As String
+    
+    s = BS_TryNodeProperty(node, "Text")
+    If Len(s) > 0 Then
+        BS_GetNodeBestText = s
+        Exit Function
+    End If
+    
+    s = BS_TryNodeProperty(node, "Value")
+    If Len(s) > 0 Then
+        BS_GetNodeBestText = s
+        Exit Function
+    End If
+    
+    s = BS_TryNodeProperty(node, "DisplayText")
+    If Len(s) > 0 Then
+        BS_GetNodeBestText = s
+        Exit Function
+    End If
+    
+    s = BS_TryNodeProperty(node, "Key")
+    If Len(s) > 0 Then
+        BS_GetNodeBestText = s
+        Exit Function
+    End If
+    
+    s = BS_TryNodeProperty(node, "Tooltip")
+    If Len(s) > 0 Then
+        BS_GetNodeBestText = s
+        Exit Function
+    End If
+    
+    s = BS_TryNodeProperty(node, "DefaultTooltip")
+    If Len(s) > 0 Then
+        BS_GetNodeBestText = s
+        Exit Function
+    End If
+    
+    BS_GetNodeBestText = ""
+End Function
+
+Private Function BS_GetNodeNumberProperty(ByVal node As Object, ByVal propName As String) As Double
+    
+    On Error Resume Next
+    
+    Select Case UCase$(propName)
+        Case "TOP"
+            BS_GetNodeNumberProperty = CDbl(CallByName(node, "Top", VbGet))
+        Case "LEFT"
+            BS_GetNodeNumberProperty = CDbl(CallByName(node, "Left", VbGet))
+        Case Else
+            BS_GetNodeNumberProperty = 0
+    End Select
+    
+    If Err.Number <> 0 Then
+        BS_GetNodeNumberProperty = 0
+        Err.Clear
+    End If
+    
+    On Error GoTo 0
+End Function
+
+Private Function BS_TryNodeProperty(ByVal node As Object, ByVal propName As String) As String
+    
+    On Error Resume Next
+    
+    Select Case UCase$(propName)
+        Case "TEXT"
+            BS_TryNodeProperty = CStr(CallByName(node, "Text", VbGet))
+        Case "VALUE"
+            BS_TryNodeProperty = CStr(CallByName(node, "Value", VbGet))
+        Case "DISPLAYTEXT"
+            BS_TryNodeProperty = CStr(CallByName(node, "DisplayText", VbGet))
+        Case "KEY"
+            BS_TryNodeProperty = CStr(CallByName(node, "Key", VbGet))
+        Case "TOOLTIP"
+            BS_TryNodeProperty = CStr(CallByName(node, "Tooltip", VbGet))
+        Case "DEFAULTTOOLTIP"
+            BS_TryNodeProperty = CStr(CallByName(node, "DefaultTooltip", VbGet))
+        Case Else
+            BS_TryNodeProperty = ""
+    End Select
+    
+    If Err.Number <> 0 Then
+        BS_TryNodeProperty = ""
+        Err.Clear
+    End If
+    
+    On Error GoTo 0
+End Function
+
+Private Function BS_GetChildrenCount(ByVal node As Object) As Long
+    On Error Resume Next
+    BS_GetChildrenCount = node.Children.Count
+    If Err.Number <> 0 Then
+        BS_GetChildrenCount = 0
+        Err.Clear
+    End If
+    On Error GoTo 0
+End Function
+
+Private Function BS_GetObjectType(ByVal node As Object) As String
+    On Error Resume Next
+    BS_GetObjectType = CStr(node.Type)
+    If Err.Number <> 0 Then
+        BS_GetObjectType = TypeName(node)
+        Err.Clear
+    End If
+    On Error GoTo 0
+End Function
+
+Private Function BS_ShouldIgnoreNodeText(ByVal objType As String, ByVal objText As String) As Boolean
+    
+    Dim tType As String
+    
+    tType = LCase$(objType)
+    
+    If Len(objText) = 0 Then
+        BS_ShouldIgnoreNodeText = True
+        Exit Function
+    End If
+    
+    If tType Like "*guibutton*" Then
+        BS_ShouldIgnoreNodeText = True
+        Exit Function
+    End If
+    
+    If tType Like "*guitoolbar*" Then
+        BS_ShouldIgnoreNodeText = True
+        Exit Function
+    End If
+    
+    If tType Like "*guimenubar*" Then
+        BS_ShouldIgnoreNodeText = True
+        Exit Function
+    End If
+    
+    If tType Like "*guistatusbar*" Then
+        BS_ShouldIgnoreNodeText = True
+        Exit Function
+    End If
+    
+    If tType Like "*guiokcodefield*" Then
+        BS_ShouldIgnoreNodeText = True
+        Exit Function
+    End If
+    
+    BS_ShouldIgnoreNodeText = False
+End Function
+
+' =========================================================
+' STATUS / PAUSE / STOP
+' =========================================================
+Public Sub BS_UpdateStatus(ByVal txt As String)
+    On Error Resume Next
+    If VBA.UserForms.Count > 0 Then
+        Baubeschreibungssuche2.lblStatus.Caption = txt
+        DoEvents
+    End If
+    On Error GoTo 0
+End Sub
+
+Public Sub BS_ProcessUserControl(Optional ByVal statusText As String = "")
+    
+    If Len(statusText) > 0 Then BS_UpdateStatus statusText
+    
+    DoEvents
+    
+    If gBS_StopRequested Then
+        Err.Raise vbObjectError + 3001, , "Vorgang wurde vom Benutzer gestoppt."
+    End If
+    
+    Do While gBS_IsPaused
+        BS_UpdateStatus "Pausiert..."
+        
+        On Error Resume Next
+        Baubeschreibungssuche2.lblHinweis.Caption = _
+            "Pausiert. Bitte SAP und Excel NICHT bedienen." & vbCrLf & _
+            "Wird während der Pause etwas bewegt, muss der Lauf neu gestartet werden."
+        On Error GoTo 0
+        
+        DoEvents
+        
+        If gBS_StopRequested Then
+            Err.Raise vbObjectError + 3002, , "Vorgang wurde während der Pause gestoppt."
+        End If
+        
+        Sleep 150
+    Loop
+    
+    On Error Resume Next
+    Baubeschreibungssuche2.lblHinweis.Caption = ""
+    On Error GoTo 0
+End Sub
+
+Private Sub BS_WaitSap(ByVal session As Object, Optional ByVal timeoutSeconds As Double = 30)
+    
+    Dim t As Double
+    t = Timer
+    
+    Do
+        BS_ProcessUserControl
+        
+        On Error Resume Next
+        If session.Busy = False Then Exit Do
+        On Error GoTo 0
+        
+        Sleep 100
+        
+        If Timer - t > timeoutSeconds Then Exit Do
+    Loop
+    
+    DoEvents
+End Sub
+
+Private Sub BS_CloseRunningForm()
+    On Error Resume Next
+    Unload Baubeschreibungssuche2
+    On Error GoTo 0
+End Sub
+
+Private Sub BS_BringExcelToFront()
+    On Error Resume Next
+    application.Visible = True
+    application.Activate
+    SetForegroundWindow application.hwnd
+    On Error GoTo 0
+End Sub
+
+' =========================================================
+' RÜCKSPRUNG / FENSTER
+' =========================================================
+Private Sub BS_ReturnToSelection(ByVal session As Object)
+
+    Dim i As Long
+    
+    If BS_ElementExists(session, "wnd[0]/usr/ctxtP_FZGID") Then Exit Sub
+    
+    BS_CloseExtraWindows session
+    
+    For i = 1 To 6
+        If BS_ElementExists(session, "wnd[0]/usr/ctxtP_FZGID") Then Exit Sub
+        
+        If BS_ElementExists(session, "wnd[0]/tbar[0]/btn[3]") Then
+            session.findById("wnd[0]/tbar[0]/btn[3]").Press
+            BS_WaitSap session
+        Else
+            Exit For
+        End If
+    Next i
+    
+    If Not BS_ElementExists(session, "wnd[0]/usr/ctxtP_FZGID") Then
+        Err.Raise vbObjectError + 4001, , "Rücksprung auf die Selektionsmaske nicht möglich."
+    End If
+End Sub
+
+Private Sub BS_CloseExtraWindows(ByVal session As Object)
+    
+    Dim i As Long
+    
+    On Error Resume Next
+    
+    For i = BS_GetWindowCount(session) - 1 To 1 Step -1
+        session.findById("wnd[" & i & "]").Close
+        Sleep 100
+    Next i
+    
+    On Error GoTo 0
+End Sub
+
+Private Function BS_GetWindowCount(ByVal session As Object) As Long
+    On Error Resume Next
+    BS_GetWindowCount = session.Children.Count
+    If Err.Number <> 0 Then
+        BS_GetWindowCount = 1
+        Err.Clear
+    End If
+    On Error GoTo 0
+End Function
+
+Private Function BS_WindowExists(ByVal session As Object, ByVal wndIndex As Long) As Boolean
+    On Error Resume Next
+    Call session.findById("wnd[" & wndIndex & "]")
+    BS_WindowExists = (Err.Number = 0)
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+' =========================================================
+' HELFER SAP-FELDER
+' =========================================================
+Private Sub BS_SetText(ByVal session As Object, ByVal id As String, ByVal value As String, Optional ByVal required As Boolean = True)
+    On Error GoTo fehler
+    session.findById(id).text = value
+    Exit Sub
+
+fehler:
+    If required Then
+        Err.Raise vbObjectError + 5001, , "Pflichtfeld nicht gefunden: " & id
+    End If
+End Sub
+
+Private Sub BS_SetCheck(ByVal session As Object, ByVal id As String, ByVal value As Boolean, Optional ByVal required As Boolean = True)
+    On Error GoTo fehler
+    session.findById(id).Selected = value
+    Exit Sub
+
+fehler:
+    If required Then
+        Err.Raise vbObjectError + 5002, , "Pflicht-Checkbox nicht gefunden: " & id
+    End If
+End Sub
+
+Private Sub BS_SetRadio(ByVal session As Object, ByVal id As String, Optional ByVal required As Boolean = True)
+    On Error GoTo fehler
+    session.findById(id).Selected = True
+    Exit Sub
+
+fehler:
+    If required Then
+        Err.Raise vbObjectError + 5003, , "Pflicht-Radiobutton nicht gefunden: " & id
+    End If
+End Sub
+
+Private Function BS_ElementExists(ByVal session As Object, ByVal id As String) As Boolean
+    On Error Resume Next
+    Call session.findById(id)
+    BS_ElementExists = (Err.Number = 0)
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+Private Function BS_GetStatusBarText(ByVal session As Object) As String
+    On Error Resume Next
+    BS_GetStatusBarText = session.findById("wnd[0]/sbar").text
+    On Error GoTo 0
+End Function
+
+Private Function BS_IsNoData(ByVal statusText As String) As Boolean
+    
+    Dim t As String
+    t = LCase$(statusText)
+    
+    BS_IsNoData = _
+           InStr(t, "keine daten") > 0 _
+        Or InStr(t, "nicht vorhanden") > 0 _
+        Or InStr(t, "no data") > 0 _
+        Or InStr(t, "kein objekt") > 0 _
+        Or InStr(t, "nicht gefunden") > 0
+End Function
+
+' =========================================================
+' BB-NUMMERN VERARBEITEN
+' =========================================================
+Private Function BS_ParseBBNumbers(ByVal rawText As String) As Collection
+    
+    Dim lines() As String
+    Dim line As Variant
+    Dim txt As String
+    
+    Dim result As Collection
+    Dim dict As Object
+    
+    Set result = New Collection
+    Set dict = CreateObject("Scripting.Dictionary")
+    
+    rawText = Replace(rawText, vbCrLf, vbLf)
+    rawText = Replace(rawText, vbCr, vbLf)
+    rawText = Replace(rawText, ";", vbLf)
+    rawText = Replace(rawText, ",", vbLf)
+    rawText = Replace(rawText, vbTab, vbLf)
+    
+    lines = Split(rawText, vbLf)
+    
+    For Each line In lines
+        txt = Trim$(CStr(line))
+        
+        If Len(txt) > 0 Then
+            If Not dict.Exists(UCase$(txt)) Then
+                dict.Add UCase$(txt), txt
+                result.Add txt
+            End If
+        End If
+    Next line
+    
+    Set BS_ParseBBNumbers = result
+End Function
+
+' =========================================================
+' ERGEBNIS / TXT
+' =========================================================
+Private Function BS_BuildRawResultEntry(ByVal bb As String, ByVal found As Boolean, ByVal resultText As String) As String
+    BS_BuildRawResultEntry = bb & BS_ITEM_SEP & IIf(found, "Treffer", "Kein Treffer") & BS_ITEM_SEP & resultText
+End Function
+
+Private Sub BS_ParseRawResultEntry(ByVal rawEntry As String, ByRef bb As String, ByRef statusText As String, ByRef detailText As String)
+    
+    Dim arr() As String
+    
+    arr = Split(rawEntry, BS_ITEM_SEP, 3)
+    
+    bb = ""
+    statusText = ""
+    detailText = ""
+    
+    If UBound(arr) >= 0 Then bb = arr(0)
+    If UBound(arr) >= 1 Then statusText = arr(1)
+    If UBound(arr) >= 2 Then detailText = arr(2)
+End Sub
+
+Private Function BS_BuildResultText(ByVal resultItems As Collection) As String
+    
+    Dim s As String
+    Dim i As Long
+    Dim bb As String
+    Dim statusText As String
+    Dim detailText As String
+    Dim fullText As String
+    Dim showItem As Boolean
+    Dim sep As String
+    
+    sep = "------------------------------"
+    
+    For i = 1 To resultItems.Count
+        
+        BS_ParseRawResultEntry CStr(resultItems(i)), bb, statusText, detailText
+        
+        fullText = bb & vbCrLf & statusText & vbCrLf & detailText
+        
+        showItem = True
+        If gBS_FilterActive Then
+            showItem = (InStr(1, fullText, gBS_FilterText, vbTextCompare) > 0)
+        End If
+        
+        If showItem Then
+            If Len(s) > 0 Then s = s & vbCrLf
+            
+            s = s & sep & vbCrLf
+            s = s & sep & vbCrLf
+            s = s & "BB-Nummer: " & bb & vbCrLf
+            
+            If Len(detailText) > 0 Then
+                s = s & detailText
+                If Right$(detailText, 2) <> vbCrLf Then
+                    s = s & vbCrLf
+                End If
+            Else
+                s = s & "[Kein auslesbarer Detailtext]" & vbCrLf
+            End If
+        End If
+    Next i
+    
+    BS_BuildResultText = s
+End Function
+
+Public Function BS_SaveResultTextToDesktop(ByVal txt As String) As String
+    
+    Dim wsh As Object
+    Dim desktopPath As String
+    Dim filePath As String
+    Dim fileNo As Integer
+    
+    Set wsh = CreateObject("WScript.Shell")
+    desktopPath = wsh.SpecialFolders("Desktop")
+    
+    filePath = desktopPath & "\Baubeschreibungssuche_" & format$(Now, "yyyymmdd_hhnnss") & ".txt"
+    
+    fileNo = FreeFile
+    Open filePath For Output As #fileNo
+    Print #fileNo, txt
+    Close #fileNo
+    
+    BS_SaveResultTextToDesktop = filePath
+End Function
+
+' =========================================================
+' FORM TOPMOST
+' =========================================================
+Public Sub BS_MakeFormTopMost(ByVal formCaption As String)
+
+#If VBA7 Then
+    Dim hwnd As LongPtr
+#Else
+    Dim hwnd As Long
+#End If
+
+    On Error Resume Next
+    
+    hwnd = FindWindowA(vbNullString, formCaption)
+    If hwnd <> 0 Then
+        SetWindowPos hwnd, HWND_TOPMOST, 0, 0, 0, 0, _
+                     SWP_NOMOVE Or SWP_NOSIZE Or SWP_SHOWWINDOW
+    End If
+    
+    On Error GoTo 0
+End Sub
+
+' =========================================================
+' KLEINE HELFER
+' =========================================================
+Private Function BS_Nvl(ByVal txt As String, ByVal fallback As String) As String
+    If Len(txt) = 0 Then
+        BS_Nvl = fallback
+    Else
+        BS_Nvl = txt
+    End If
+End Function
+

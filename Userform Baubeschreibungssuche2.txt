@@ -1,0 +1,57 @@
+Option Explicit
+
+Private Sub UserForm_Initialize()
+    
+    'Breite und Höhe des Popups da VBA es sonst nicht hinkriegt:
+    Me.Width = 300
+    Me.Height = 200
+    'mittige zentrierung des Popups wird ebenfalls durch Code erzwungen:
+    Me.StartUpPosition = 0
+    Me.Left = application.Left + (application.Width / 2) - (Me.Width / 2)
+    Me.Top = application.Top + (application.Height / 2) - (Me.Height / 2)
+    
+    Me.Caption = "Baubeschreibungssuche läuft"
+    
+    Me.lblStatus.Caption = "Warte auf Start..."
+    Me.lblHinweis.Caption = ""
+    
+    Me.cmdPauseWeiter.Caption = "Pausieren"
+    Me.cmdStop.Caption = "Stoppen"
+End Sub
+
+Private Sub cmdPauseWeiter_Click()
+
+    If gBS_IsPaused Then
+        gBS_IsPaused = False
+        Me.cmdPauseWeiter.Caption = "Pausieren"
+        Me.lblHinweis.Caption = ""
+        Me.lblStatus.Caption = "Lauf wird fortgesetzt..."
+    Else
+        gBS_IsPaused = True
+        Me.cmdPauseWeiter.Caption = "Weiter"
+        Me.lblHinweis.Caption = _
+            "Pausiert. Bitte SAP und Excel NICHT bedienen." & vbCrLf & _
+            "Wird etwas bewegt, muss der Lauf neu gestartet werden."
+        Me.lblStatus.Caption = "Pausiert..."
+    End If
+End Sub
+
+Private Sub cmdStop_Click()
+    If MsgBox("Soll der laufende Vorgang wirklich gestoppt werden?", vbQuestion + vbYesNo, "Vorgang stoppen") = vbYes Then
+        gBS_StopRequested = True
+        Me.lblStatus.Caption = "Stop-Anforderung gesetzt..."
+    End If
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    If gBS_RunStarted Then
+        Cancel = True
+        MsgBox "Dieses Fenster kann während des Laufs nicht geschlossen werden." & vbCrLf & _
+               "Bitte 'Pausieren' oder 'Stoppen' verwenden.", vbInformation, "Hinweis"
+    End If
+End Sub
+
+Private Sub UserForm_Activate()
+    BS_MakeFormTopMost Me.Caption
+End Sub
+

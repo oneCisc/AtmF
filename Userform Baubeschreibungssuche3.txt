@@ -1,0 +1,65 @@
+Option Explicit
+
+Private mResultText As String
+
+Public Sub SetResultText(ByVal txt As String)
+    mResultText = txt
+    
+    On Error Resume Next
+    Me.txtErgebnisse.text = txt
+    On Error GoTo 0
+End Sub
+
+Private Sub UserForm_Initialize()
+    
+    'Breite und Höhe des Popups da VBA es sonst nicht hinkriegt:
+    Me.Width = 703
+    Me.Height = 682
+    'mittige zentrierung des Popups wird ebenfalls durch Code erzwungen:
+    Me.StartUpPosition = 0
+    Me.Left = application.Left + (application.Width / 2) - (Me.Width / 2)
+    Me.Top = application.Top + (application.Height / 2) - (Me.Height / 2)
+    
+    Me.Caption = "Ergebnis Baubeschreibungssuche"
+    
+    On Error Resume Next
+    With Me.txtErgebnisse
+        .text = mResultText
+        .Font.Name = "Courier New"
+        .Font.Size = 10
+    End With
+    On Error GoTo 0
+End Sub
+
+Private Sub UserForm_Activate()
+    On Error Resume Next
+    With Me.txtErgebnisse
+        .text = mResultText
+        .Font.Name = "Courier New"
+        .Font.Size = 10
+    End With
+    On Error GoTo 0
+    
+    BS_MakeFormTopMost Me.Caption
+End Sub
+
+Private Sub cmdOK_Click()
+    Unload Me
+End Sub
+
+Private Sub cmdAlsTXT_Click()
+    BS_SaveTxtFile
+End Sub
+
+Private Sub cmdAlsText_Click()
+    BS_SaveTxtFile
+End Sub
+
+Private Sub BS_SaveTxtFile()
+
+    Dim filePath As String
+    
+    filePath = BS_SaveResultTextToDesktop(Me.txtErgebnisse.text)
+    
+    MsgBox "TXT-Datei gespeichert:" & vbCrLf & filePath, vbInformation, "Gespeichert"
+End Sub
