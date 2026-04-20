@@ -154,14 +154,23 @@ SauberBeenden:
     Exit Sub
 
 fehler:
+    Dim lErrNum As Long
+    Dim sErrDesc As String
+    lErrNum = Err.Number
+    sErrDesc = Err.Description
+
     gBS_RunStarted = False
+    gBS_IsPaused = False
+    gBS_StopRequested = False
     BS_CloseRunningForm
     BS_BringExcelToFront
-    
-    If Err.Number <> 0 Then
+
+    If lErrNum <> 0 _
+       And lErrNum <> vbObjectError + 3001 _
+       And lErrNum <> vbObjectError + 3002 Then
         MsgBox "Makrofehler:" & vbCrLf & _
-               "Nr. " & Err.Number & vbCrLf & _
-               Err.Description, vbCritical, "Baubeschreibungssuche"
+               "Nr. " & lErrNum & vbCrLf & _
+               sErrDesc, vbCritical, "Baubeschreibungssuche"
     End If
 End Sub
 
@@ -412,6 +421,9 @@ Private Sub BS_RunFind(ByVal session As Object, ByVal searchTerm As String, ByRe
     Exit Sub
 
 fehler:
+    If Err.Number = vbObjectError + 3001 Or Err.Number = vbObjectError + 3002 Then
+        Err.Raise Err.Number, Err.Source, Err.Description
+    End If
     found = False
     resultText = "Fehler bei der Suche: " & Err.Description
 End Sub
