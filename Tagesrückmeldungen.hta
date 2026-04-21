@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>Tagesrückmeldungen</title>
+<HTA:APPLICATION
+  APPLICATIONNAME="Tagesrückmeldungen"
+  ID="oHTA"
+  VERSION="1.0"
+  BORDER="dialog"
+  BORDERSTYLE="normal"
+  CAPTION="yes"
+  MAXIMIZEBUTTON="no"
+  MINIMIZEBUTTON="yes"
+  SHOWINTASKBAR="yes"
+  SINGLEINSTANCE="yes"
+  SYSMENU="yes"
+  WINDOWSTATE="normal"
+  SCROLL="no"
+/>
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #0e1525;
+    color: #d0d8e8;
+    overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────── */
+#header {
+    background: #0f2848;
+    border-bottom: 3px solid #c0392b;
+    padding: 15px 22px 13px 22px;
+}
+
+#header-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: 0.4px;
+}
+
+#header-sub {
+    font-size: 11px;
+    color: #607080;
+    margin-top: 3px;
+    letter-spacing: 0.3px;
+}
+
+/* ── Inhalt ──────────────────────────────────────── */
+#content {
+    padding: 18px 22px 20px 22px;
+    background: #16213e;
+}
+
+/* ── Excel-Status-Zeile ──────────────────────────── */
+#xl-bar {
+    background: #0a1628;
+    border: 1px solid #1a2e48;
+    border-radius: 4px;
+    padding: 7px 11px;
+    margin-bottom: 16px;
+    font-size: 11px;
+    color: #506070;
+    height: 30px;
+}
+
+#xl-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background: #3a4a5a;
+    margin-right: 7px;
+    vertical-align: middle;
+    margin-top: -2px;
+}
+
+#xl-dot.ok  { background: #27ae60; }
+#xl-dot.err { background: #c0392b; }
+
+#xl-text {
+    vertical-align: middle;
+}
+
+/* ── Formulargruppen ─────────────────────────────── */
+.form-group {
+    margin-bottom: 14px;
+}
+
+.form-label {
+    display: block;
+    font-size: 10px;
+    color: #607080;
+    text-transform: uppercase;
+    letter-spacing: 0.9px;
+    font-weight: 600;
+    margin-bottom: 5px;
+}
+
+.form-input {
+    width: 100%;
+    padding: 9px 12px;
+    background: #0f2040;
+    border: 1px solid #1e3a5a;
+    border-radius: 4px;
+    color: #e0e8f0;
+    font-size: 14px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    outline: none;
+}
+
+.form-hint {
+    font-size: 10px;
+    color: #384858;
+    margin-top: 4px;
+    padding-left: 2px;
+}
+
+/* ── Trennlinie ──────────────────────────────────── */
+.sep {
+    height: 1px;
+    background: #1a2e48;
+    margin: 14px 0 16px 0;
+}
+
+/* ── Haupt-Button ────────────────────────────────── */
+#btnStart {
+    width: 100%;
+    padding: 11px 14px;
+    background: #c0392b;
+    border: none;
+    border-radius: 4px;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    letter-spacing: 0.4px;
+}
+
+#btnStart:hover    { background: #a93226; }
+#btnStart:disabled { background: #2a3a50; color: #4a5a6a; cursor: default; }
+
+/* ── Fortschrittsbereich ─────────────────────────── */
+#progress-area {
+    display: none;
+    margin-top: 14px;
+}
+
+#progress-label {
+    font-size: 10px;
+    color: #607080;
+    margin-bottom: 5px;
+    letter-spacing: 0.3px;
+}
+
+#progress-track {
+    height: 5px;
+    background: #0f2040;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+#progress-fill {
+    height: 5px;
+    width: 0%;
+    background: #c0392b;
+    border-radius: 3px;
+}
+
+/* ── Status-Box ──────────────────────────────────── */
+#status-box {
+    display: none;
+    background: #080f1e;
+    border: 1px solid #1a2e48;
+    border-left: 3px solid #2980b9;
+    border-radius: 3px;
+    padding: 9px 13px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: #4a9cc8;
+    min-height: 34px;
+    line-height: 1.5;
+}
+
+/* ── Ergebnis-Box ────────────────────────────────── */
+#result-box {
+    display: none;
+    margin-top: 10px;
+    padding: 11px 14px;
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+#result-box.ok {
+    background: #0a2015;
+    border: 1px solid #1a5030;
+    border-left: 3px solid #27ae60;
+    color: #6fcf97;
+}
+
+#result-box.err {
+    background: #1e0808;
+    border: 1px solid #4a1010;
+    border-left: 3px solid #c0392b;
+    color: #e07070;
+}
+
+/* ── Schließen-Button ────────────────────────────── */
+#btnClose {
+    display: none;
+    width: 100%;
+    padding: 9px;
+    background: transparent;
+    border: 1px solid #1e3050;
+    border-radius: 4px;
+    color: #506070;
+    font-size: 12px;
+    cursor: pointer;
+    margin-top: 8px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+#btnClose:hover { background: #0f1e30; color: #8090a0; }
+
+/* ── Fußzeile ────────────────────────────────────── */
+#footer {
+    background: #090e18;
+    padding: 7px 22px;
+    font-size: 10px;
+    color: #253040;
+    text-align: right;
+    border-top: 1px solid #151f30;
+}
+</style>
+
+<script language="VBScript">
+Option Explicit
+
+' =========================================================
+' KONFIGURATION (identisch zum VBA-Original)
+' =========================================================
+Const CFG_SAP_TRANSACTION  = "/nZPTA"
+Const CFG_SAP_TIME_LABEL_X = 122
+Const CFG_FIRST_DATA_ROW   = 8
+Const CFG_LAST_DATA_ROW    = 500
+Const CFG_DEFAULT_SHIFT_END = "14:45"
+
+' =========================================================
+' GLOBALE VARIABLEN
+' =========================================================
+Dim gZielDatum
+Dim gSchichtEnde
+Dim gSettingsPath
+Dim gSettings
+
+' =========================================================
+' INITIALISIERUNG
+' =========================================================
+Sub Window_OnLoad()
+    ' Fenstergröße und Zentrierung
+    window.resizeTo 480, 560
+    Dim sw, sh
+    sw = screen.availWidth
+    sh = screen.availHeight
+    window.moveTo Int((sw - 480) / 2), Int((sh - 560) / 2)
+
+    ' Einstellungspfad aufbauen (%APPDATA%\Tagesrueckmeldungen\)
+    Dim shell, fso, appDir
+    On Error Resume Next
+    Set shell = CreateObject("WScript.Shell")
+    Set fso   = CreateObject("Scripting.FileSystemObject")
+    If Err.Number <> 0 Then
+        Err.Clear
+        On Error GoTo 0
+        MsgBox "Kritischer Fehler: Scripting-Objekte konnten nicht erstellt werden.", vbCritical, "Fehler"
+        window.close()
+        Exit Sub
+    End If
+    On Error GoTo 0
+
+    appDir = shell.ExpandEnvironmentStrings("%APPDATA%") & "\Tagesrueckmeldungen"
+    On Error Resume Next
+    If Not fso.FolderExists(appDir) Then fso.CreateFolder appDir
+    On Error GoTo 0
+    gSettingsPath = appDir & "\tagesrueckmeldungen.cfg"
+
+    Set shell = Nothing
+    Set fso   = Nothing
+
+    ' Gespeicherte Einstellungen laden
+    LadeEinstellungen
+
+    ' Felder vorbelegen
+    Dim savedDatum, savedEnde
+    savedDatum = LadeSetting("letztesDatum")
+    savedEnde  = LadeSetting("letztesSchichtEnde")
+    If savedDatum = "" Then savedDatum = FormatDateDE(Date())
+    If savedEnde  = "" Then savedEnde  = CFG_DEFAULT_SHIFT_END
+
+    document.getElementById("txtDatum").value  = savedDatum
+    document.getElementById("txtEndeFS").value = savedEnde
+
+    ' Excel-Status prüfen und anzeigen
+    PruefeExcelStatus
+
+    document.getElementById("txtDatum").focus()
+End Sub
+
+' =========================================================
+' EXCEL-STATUS-INDIKATOR
+' =========================================================
+Sub PruefeExcelStatus()
+    Dim xlApp, wbName, dotEl, txtEl
+    wbName = ""
+
+    On Error Resume Next
+    Set xlApp = GetObject(, "Excel.Application")
+    If Err.Number = 0 And IsObject(xlApp) Then
+        On Error GoTo 0
+        On Error Resume Next
+        wbName = xlApp.ActiveWorkbook.Name
+        On Error GoTo 0
+    Else
+        Err.Clear
+        On Error GoTo 0
+    End If
+    Set xlApp = Nothing
+
+    Set dotEl = document.getElementById("xl-dot")
+    Set txtEl = document.getElementById("xl-text")
+
+    If wbName <> "" Then
+        dotEl.className = "ok"
+        txtEl.innerHTML = "Excel aktiv &mdash; <strong>" & wbName & "</strong>"
+    Else
+        dotEl.className = "err"
+        txtEl.innerHTML = "Keine Excel-Datei offen &mdash; bitte vor dem Start Excel &ouml;ffnen"
+    End If
+
+    Set dotEl = Nothing
+    Set txtEl = Nothing
+End Sub
+
+' =========================================================
+' EINSTELLUNGEN LADEN / SPEICHERN
+' =========================================================
+Sub LadeEinstellungen()
+    Set gSettings = CreateObject("Scripting.Dictionary")
+    On Error Resume Next
+    Dim fso, f, line, parts
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If fso.FileExists(gSettingsPath) Then
+        Set f = fso.OpenTextFile(gSettingsPath, 1, False, -1)
+        Do While Not f.AtEndOfStream
+            line = f.ReadLine()
+            If InStr(line, "=") > 0 Then
+                parts = Split(line, "=", 2)
+                If UBound(parts) = 1 Then
+                    gSettings(Trim(parts(0))) = Trim(parts(1))
+                End If
+            End If
+        Loop
+        f.Close
+    End If
+    Set fso = Nothing
+    On Error GoTo 0
+End Sub
+
+Function LadeSetting(key)
+    LadeSetting = ""
+    If Not IsObject(gSettings) Then Exit Function
+    On Error Resume Next
+    If gSettings.Exists(key) Then LadeSetting = gSettings(key)
+    On Error GoTo 0
+End Function
+
+Sub SpeichereEinstellungen(datum, schichtEnde)
+    On Error Resume Next
+    Dim fso, f
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set f   = fso.CreateTextFile(gSettingsPath, True, True)
+    f.WriteLine "letztesDatum=" & datum
+    f.WriteLine "letztesSchichtEnde=" & schichtEnde
+    f.Close
+    Set fso = Nothing
+    On Error GoTo 0
+End Sub
+
+' =========================================================
+' UI-HILFSFUNKTIONEN
+' =========================================================
+Sub SetStatus(msg)
+    document.getElementById("status-box").innerHTML    = msg
+    document.getElementById("status-box").style.display = "block"
+End Sub
+
+Sub SetProgress(pct, label)
+    document.getElementById("progress-fill").style.width  = pct & "%"
+    document.getElementById("progress-label").innerHTML   = label
+End Sub
+
+Sub SetResult(msg, istFehler)
+    Dim box
+    Set box = document.getElementById("result-box")
+    box.innerHTML     = msg
+    box.style.display = "block"
+    If istFehler Then
+        box.className = "err"
+    Else
+        box.className = "ok"
+    End If
+    Set box = Nothing
+End Sub
+
+Sub UIFreigeben()
+    document.getElementById("btnStart").disabled   = False
+    document.getElementById("txtDatum").disabled   = False
+    document.getElementById("txtEndeFS").disabled  = False
+    document.getElementById("btnClose").style.display = "block"
+    PruefeExcelStatus
+End Sub
+
+' =========================================================
+' BUTTON-HANDLER
+' =========================================================
+Sub BtnStart_Click()
+    Dim datumText, endeText
+    datumText = Trim(document.getElementById("txtDatum").value)
+    endeText  = Trim(document.getElementById("txtEndeFS").value)
+
+    ' ── Validierung Datum ────────────────────────────────
+    If datumText = "" Then
+        MsgBox "Bitte ein Datum eingeben.", vbExclamation, "Eingabe fehlt"
+        document.getElementById("txtDatum").focus()
+        Exit Sub
+    End If
+
+    On Error Resume Next
+    gZielDatum = CDate(datumText)
+    Dim dateErr
+    dateErr = Err.Number
+    Err.Clear
+    On Error GoTo 0
+
+    If dateErr <> 0 Then
+        MsgBox "Ung" & Chr(252) & "ltiges Datum." & Chr(13) & _
+               "Bitte im Format TT.MM.JJJJ eingeben." & Chr(13) & _
+               "Beispiel: 13.03.2026", vbCritical, "Eingabefehler"
+        document.getElementById("txtDatum").focus()
+        Exit Sub
+    End If
+
+    ' ── Validierung Uhrzeit ──────────────────────────────
+    If endeText = "" Then
+        MsgBox "Bitte das Ende der Fr" & Chr(252) & "hschicht eingeben.", vbExclamation, "Eingabe fehlt"
+        document.getElementById("txtEndeFS").focus()
+        Exit Sub
+    End If
+
+    On Error Resume Next
+    gSchichtEnde = TimeValue(endeText)
+    Dim timeErr
+    timeErr = Err.Number
+    Err.Clear
+    On Error GoTo 0
+
+    If timeErr <> 0 Then
+        MsgBox "Ung" & Chr(252) & "ltige Uhrzeit." & Chr(13) & _
+               "Bitte im Format HH:MM eingeben." & Chr(13) & _
+               "Beispiel: 14:45", vbCritical, "Eingabefehler"
+        document.getElementById("txtEndeFS").focus()
+        Exit Sub
+    End If
+
+    ' ── Einstellungen sichern ────────────────────────────
+    SpeichereEinstellungen datumText, endeText
+
+    ' ── UI sperren und Fortschritt einblenden ────────────
+    document.getElementById("btnStart").disabled   = True
+    document.getElementById("txtDatum").disabled   = True
+    document.getElementById("txtEndeFS").disabled  = True
+    document.getElementById("progress-area").style.display = "block"
+    document.getElementById("status-box").style.display    = "block"
+    document.getElementById("result-box").style.display    = "none"
+    document.getElementById("btnClose").style.display      = "none"
+
+    SetProgress 0, "Wird gestartet..."
+    SetStatus   "Initialisierung..."
+
+    ' ── Hauptroutine aufrufen ────────────────────────────
+    FT_Tagesrueckmeldungen_Starten
+End Sub
+
+Sub BtnClose_Click()
+    window.close()
+End Sub
+
+' =========================================================
+' SAP-VERBINDUNG
+' =========================================================
+Function FT_GetSapSession()
+    Set FT_GetSapSession = Nothing
+
+    Dim SapGuiAuto, sapApp, sapConn, sapSess
+
+    On Error Resume Next
+    Set SapGuiAuto = GetObject("SAPGUI")
+    If Err.Number <> 0 Then Err.Clear : On Error GoTo 0 : Exit Function
+    On Error GoTo 0
+    If Not IsObject(SapGuiAuto) Then Exit Function
+
+    On Error Resume Next
+    Set sapApp = SapGuiAuto.GetScriptingEngine
+    If Err.Number <> 0 Then Err.Clear : On Error GoTo 0 : Exit Function
+    On Error GoTo 0
+    If Not IsObject(sapApp) Then Exit Function
+
+    On Error Resume Next
+    Set sapConn = sapApp.Children(0)
+    If Err.Number <> 0 Then Err.Clear : On Error GoTo 0 : Exit Function
+    On Error GoTo 0
+    If Not IsObject(sapConn) Then Exit Function
+
+    On Error Resume Next
+    Set sapSess = sapConn.Children(0)
+    If Err.Number <> 0 Then Err.Clear : On Error GoTo 0 : Exit Function
+    On Error GoTo 0
+    If Not IsObject(sapSess) Then Exit Function
+
+    Set FT_GetSapSession = sapSess
+End Function
+
+Function FT_GetStatusBarText(session)
+    FT_GetStatusBarText = ""
+    On Error Resume Next
+    FT_GetStatusBarText = session.findById("wnd[0]/sbar").text
+    On Error GoTo 0
+End Function
+
+' =========================================================
+' ZEITPARSEN (Logik identisch zum VBA-Original)
+' =========================================================
+Function FT_ParseTimeToLong(rawText)
+    FT_ParseTimeToLong = 0
+
+    Dim txt
+    txt = Trim(rawText)
+    If Len(txt) = 0 Then Exit Function
+
+    txt = Replace(txt, Chr(160), " ")
+    txt = Replace(txt, Chr(9),   " ")
+    txt = Replace(txt, "Uhr",    "",  1, -1, 1)
+    txt = Replace(txt, ".",      ":")
+    txt = Replace(txt, " ",      "")
+
+    Dim stunde, minute
+
+    If InStr(txt, ":") > 0 Then
+        Dim teile
+        teile = Split(txt, ":")
+        If UBound(teile) < 1         Then Exit Function
+        If Not IsNumeric(teile(0))   Then Exit Function
+        If Not IsNumeric(teile(1))   Then Exit Function
+        stunde = CLng(teile(0))
+        minute = CLng(teile(1))
+        If stunde < 0 Or stunde > 23 Then Exit Function
+        If minute < 0 Or minute > 59 Then Exit Function
+        FT_ParseTimeToLong = CLng(Right("0" & stunde, 2) & Right("0" & minute, 2))
+        Exit Function
+    End If
+
+    Dim digitsOnly
+    digitsOnly = FT_KeepDigits(txt)
+
+    Select Case Len(digitsOnly)
+        Case 3
+            stunde = CLng(Left(digitsOnly, 1))
+            minute = CLng(Right(digitsOnly, 2))
+        Case 4
+            stunde = CLng(Left(digitsOnly, 2))
+            minute = CLng(Right(digitsOnly, 2))
+        Case Else
+            Exit Function
+    End Select
+
+    If stunde < 0 Or stunde > 23 Then Exit Function
+    If minute < 0 Or minute > 59 Then Exit Function
+
+    FT_ParseTimeToLong = CLng(Right("0" & stunde, 2) & Right("0" & minute, 2))
+End Function
+
+Function FT_KeepDigits(txt)
+    Dim i, ch, result
+    result = ""
+    For i = 1 To Len(txt)
+        ch = Mid(txt, i, 1)
+        If ch >= "0" And ch <= "9" Then result = result & ch
+    Next
+    FT_KeepDigits = result
+End Function
+
+' =========================================================
+' HAUPTFUNKTION (Logik identisch zum VBA-Original)
+' =========================================================
+Sub FT_Tagesrueckmeldungen_Starten()
+
+    Dim session
+    Dim xlApp, ws
+
+    Dim arbeitsplaetze(2)
+    Dim zielFrueh(2)
+    Dim zielSpaet(2)
+
+    Dim i, zeile
+    Dim zielDatumText
+    Dim schichtGrenze
+    Dim fruehCount, spaetCount
+    Dim zeitText, zeitWert
+    Dim statusText, datenVorhanden
+    Dim loopErr
+
+    ' Konfiguration
+    arbeitsplaetze(0) = "E6"  : zielFrueh(0) = "H16" : zielSpaet(0) = "L16"
+    arbeitsplaetze(1) = "E8"  : zielFrueh(1) = "H18" : zielSpaet(1) = "L18"
+    arbeitsplaetze(2) = "E9"  : zielFrueh(2) = "H20" : zielSpaet(2) = "L20"
+
+    zielDatumText = FormatDateDE(gZielDatum)
+    schichtGrenze = CLng(Right("0" & Hour(gSchichtEnde), 2) & Right("0" & Minute(gSchichtEnde), 2))
+
+    ' ── Excel verbinden ──────────────────────────────────
+    SetStatus   "Verbinde mit Excel..."
+    SetProgress 5, "Excel wird gesucht..."
+
+    Dim xlErr
+    On Error Resume Next
+    Set xlApp = GetObject(, "Excel.Application")
+    xlErr = Err.Number
+    Err.Clear
+    On Error GoTo 0
+
+    If xlErr <> 0 Or Not IsObject(xlApp) Then
+        SetResult "Keine aktive Excel-Instanz gefunden.<br>" & _
+                  "Bitte &ouml;ffnen Sie die Zieldatei in Excel und starten Sie erneut.", True
+        SetStatus "Abgebrochen."
+        UIFreigeben
+        Exit Sub
+    End If
+
+    Dim wsErr
+    On Error Resume Next
+    Set ws = xlApp.ActiveSheet
+    wsErr = Err.Number
+    Err.Clear
+    On Error GoTo 0
+
+    If wsErr <> 0 Or Not IsObject(ws) Then
+        SetResult "Kein aktives Tabellenblatt in Excel gefunden.<br>" & _
+                  "Bitte stellen Sie sicher, dass eine Arbeitsmappe ge&ouml;ffnet ist.", True
+        SetStatus "Abgebrochen."
+        UIFreigeben
+        Set xlApp = Nothing
+        Exit Sub
+    End If
+
+    SetProgress 12, "Excel verbunden."
+
+    ' ── SAP verbinden ────────────────────────────────────
+    SetStatus   "Verbinde mit SAP..."
+    SetProgress 18, "SAP wird gesucht..."
+
+    Set session = FT_GetSapSession()
+
+    If Not IsObject(session) Then
+        SetResult "Keine aktive SAP-Sitzung gefunden.<br>" & _
+                  "Bitte &ouml;ffnen Sie SAP, melden Sie sich an und starten Sie erneut.", True
+        SetStatus "Abgebrochen."
+        UIFreigeben
+        Set xlApp = Nothing
+        Set ws    = Nothing
+        Exit Sub
+    End If
+
+    SetProgress 22, "SAP verbunden."
+
+    ' ── Zielzellen leeren ────────────────────────────────
+    On Error Resume Next
+    For i = 0 To 2
+        ws.Range(zielFrueh(i)).MergeArea.ClearContents
+        ws.Range(zielSpaet(i)).MergeArea.ClearContents
+    Next
+    On Error GoTo 0
+
+    ' ── SAP-Transaktion aufrufen ─────────────────────────
+    SetStatus   "SAP-Transaktion wird aufgerufen..."
+    SetProgress 26, "Navigiere in SAP..."
+
+    Dim navErr
+    On Error Resume Next
+    session.findById("wnd[0]").maximize
+    session.findById("wnd[0]/tbar[0]/okcd").text = CFG_SAP_TRANSACTION
+    session.findById("wnd[0]").sendVKey 0
+    navErr = Err.Number
+    Err.Clear
+    On Error GoTo 0
+
+    If navErr <> 0 Then
+        SetResult "SAP-Navigationsfehler.<br>" & _
+                  "Die Transaktion konnte nicht aufgerufen werden.<br>" & _
+                  "Bitte pr&uuml;fen Sie die SAP-Verbindung.", True
+        SetStatus "Abgebrochen."
+        UIFreigeben
+        Set xlApp   = Nothing
+        Set ws      = Nothing
+        Set session = Nothing
+        Exit Sub
+    End If
+
+    ' ── Arbeitsplätze nacheinander auswerten ─────────────
+    ' (Logik identisch zum VBA-Original)
+    For i = 0 To 2
+        SetStatus   "Verarbeite Arbeitsplatz " & arbeitsplaetze(i) & _
+                    " (" & (i + 1) & " von 3)..."
+        SetProgress 30 + i * 20, "Arbeitsplatz " & (i + 1) & " von 3"
+
+        On Error Resume Next
+        session.findById("wnd[0]/usr/ctxtPA_HIERA").SetFocus
+        session.findById("wnd[0]/usr/ctxtPA_HIERA").text     = ""
+        session.findById("wnd[0]/usr/ctxtSO_DATUM-LOW").text = zielDatumText
+        session.findById("wnd[0]/usr/ctxtPA_ARBPL").text     = CStr(arbeitsplaetze(i))
+        session.findById("wnd[0]/tbar[1]/btn[8]").Press
+        On Error GoTo 0
+
+        fruehCount     = 0
+        spaetCount     = 0
+        datenVorhanden = True
+
+        statusText = FT_GetStatusBarText(session)
+
+        If InStr(1, statusText, "keine",           1) > 0 _
+        Or InStr(1, statusText, "keine daten",     1) > 0 _
+        Or InStr(1, statusText, "no data",         1) > 0 _
+        Or InStr(1, statusText, "nicht vorhanden", 1) > 0 Then
+            datenVorhanden = False
+        End If
+
+        If datenVorhanden Then
+            For zeile = CFG_FIRST_DATA_ROW To CFG_LAST_DATA_ROW
+                zeitText = ""
+                loopErr  = 0
+
+                On Error Resume Next
+                zeitText = session.findById( _
+                    "wnd[0]/usr/lbl[" & CFG_SAP_TIME_LABEL_X & "," & zeile & "]").text
+                loopErr = Err.Number
+                Err.Clear
+                On Error GoTo 0
+
+                If loopErr <> 0        Then Exit For
+                If Trim(zeitText) = "" Then Exit For
+
+                zeitWert = FT_ParseTimeToLong(zeitText)
+
+                If zeitWert > 0 Then
+                    If zeitWert < schichtGrenze Then
+                        fruehCount = fruehCount + 1
+                    Else
+                        spaetCount = spaetCount + 1
+                    End If
+                End If
+            Next
+
+            On Error Resume Next
+            session.findById("wnd[0]/tbar[0]/btn[3]").Press
+            On Error GoTo 0
+        End If
+
+        On Error Resume Next
+        ws.Range(zielFrueh(i)).MergeArea.Cells(1, 1).Value = fruehCount
+        ws.Range(zielSpaet(i)).MergeArea.Cells(1, 1).Value = spaetCount
+        On Error GoTo 0
+    Next
+
+    ' ── SAP minimieren ───────────────────────────────────
+    On Error Resume Next
+    session.findById("wnd[0]").Iconify
+    On Error GoTo 0
+
+    ' ── Abschluss ────────────────────────────────────────
+    SetProgress 100, "Abgeschlossen."
+    SetStatus "Fertig &ndash; alle Arbeitspl&auml;tze verarbeitet."
+    SetResult "Tagesr&uuml;ckmeldungen vom <strong>" & zielDatumText & _
+              "</strong> erfolgreich aktualisiert!", False
+
+    UIFreigeben
+    window.focus()
+
+    Set session = Nothing
+    Set ws      = Nothing
+    Set xlApp   = Nothing
+End Sub
+
+' =========================================================
+' HILFSFUNKTION: Datum formatieren (TT.MM.JJJJ)
+' =========================================================
+Function FormatDateDE(dt)
+    FormatDateDE = Right("0" & Day(dt), 2) & "." & _
+                   Right("0" & Month(dt), 2) & "." & Year(dt)
+End Function
+</script>
+</head>
+
+<body>
+
+<!-- ── Header ─────────────────────────────────────── -->
+<div id="header">
+    <div id="header-title">Tagesr&uuml;ckmeldungen</div>
+    <div id="header-sub">SAP-Schichtauswertung &nbsp;&bull;&nbsp; Automatisierung</div>
+</div>
+
+<!-- ── Inhalt ──────────────────────────────────────── -->
+<div id="content">
+
+    <!-- Excel-Status -->
+    <div id="xl-bar">
+        <span id="xl-dot" class="err"></span>
+        <span id="xl-text">Excel-Status wird gepr&uuml;ft...</span>
+    </div>
+
+    <!-- Datum -->
+    <div class="form-group">
+        <span class="form-label">Auswertungsdatum</span>
+        <input class="form-input" type="text" id="txtDatum"
+               maxlength="10" placeholder="TT.MM.JJJJ" />
+        <div class="form-hint">Format: TT.MM.JJJJ &nbsp;&mdash;&nbsp; Beispiel: 13.03.2026</div>
+    </div>
+
+    <!-- Schichtende -->
+    <div class="form-group">
+        <span class="form-label">Ende Fr&uuml;hschicht</span>
+        <input class="form-input" type="text" id="txtEndeFS"
+               maxlength="5" placeholder="HH:MM" />
+        <div class="form-hint">Format: HH:MM &nbsp;&mdash;&nbsp; Beispiel: 14:45</div>
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- Start-Button -->
+    <button id="btnStart" onclick="BtnStart_Click()">
+        &#9654;&nbsp;&nbsp;Auswertung starten
+    </button>
+
+    <!-- Fortschritt -->
+    <div id="progress-area">
+        <div id="progress-label" style="font-size:10px;color:#607080;margin-top:12px;margin-bottom:5px;"></div>
+        <div id="progress-track">
+            <div id="progress-fill"></div>
+        </div>
+    </div>
+
+    <!-- Status -->
+    <div id="status-box"></div>
+
+    <!-- Ergebnis -->
+    <div id="result-box"></div>
+
+    <!-- Schließen -->
+    <button id="btnClose" onclick="BtnClose_Click()">Schlie&szlig;en</button>
+
+</div>
+
+<!-- ── Fußzeile ──────────────────────────────────────── -->
+<div id="footer">Tagesr&uuml;ckmeldungen v1.0 &nbsp;&bull;&nbsp; SAP-Automatisierung</div>
+
+</body>
+</html>
