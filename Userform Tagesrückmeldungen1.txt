@@ -1,0 +1,51 @@
+Option Explicit
+
+Private Sub UserForm_Initialize()
+    
+    'Breite und Höhe des Popups da VBA es sonst nicht hinkriegt:
+    Me.Width = 300
+    Me.Height = 200
+    'mittige zentrierung des Popups wird ebenfalls durch Code erzwungen:
+    Me.StartUpPosition = 0
+    Me.Left = application.Left + (application.Width / 2) - (Me.Width / 2)
+    Me.Top = application.Top + (application.Height / 2) - (Me.Height / 2)
+    
+    Me.txtDatum.value = gDefaultDatum
+    Me.txtEndeFS.value = gDefaultEndeFS
+    gFormBestaetigt = False
+End Sub
+
+Private Sub cmdWeiter_Click()
+    On Error GoTo fehler
+
+    If Trim$(Me.txtDatum.value) = "" Then
+        MsgBox "Bitte ein Datum eingeben.", vbExclamation, "Eingabe fehlt"
+        Exit Sub
+    End If
+
+    If Trim$(Me.txtEndeFS.value) = "" Then
+        MsgBox "Bitte das Ende der Frühschicht eingeben.", vbExclamation, "Eingabe fehlt"
+        Exit Sub
+    End If
+
+    gZielDatum = CDate(Me.txtDatum.value)
+    gSchichtEnde = TimeValue(Me.txtEndeFS.value)
+
+    gFormBestaetigt = True
+    gSitzungAktiv = True
+    gLetztesDatum = gZielDatum
+    gLetzteSchichtEnde = gSchichtEnde
+
+    Me.Hide
+    Exit Sub
+
+fehler:
+    MsgBox "Ungültige Eingabe." & vbCrLf & _
+           "Datum z. B.: 13.03.2026" & vbCrLf & _
+           "Ende Frühschicht z. B.: 14:45", vbCritical, "Fehler"
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    gFormBestaetigt = False
+End Sub
+

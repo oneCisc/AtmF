@@ -1,0 +1,362 @@
+Option Explicit
+
+' =========================================================
+' KONFIGURATION
+' =========================================================
+Private Const CFG_SAP_TRANSACTION As String = "/nZPTA"
+Private Const CFG_SAP_TIME_LABEL_X As Long = 122
+Private Const CFG_FIRST_DATA_ROW As Long = 8
+Private Const CFG_LAST_DATA_ROW As Long = 500
+
+Private Const CFG_DEFAULT_DATE_MODE As String = "TODAY"   ' TODAY oder FIXED
+Private Const CFG_DEFAULT_FIXED_DATE As String = "13.03.2026"
+Private Const CFG_DEFAULT_SHIFT_END As String = "14:45"
+
+Private Const CFG_MSG_NO_SAP As String = "Keine aktive SAP-Sitzung gefunden!"
+Private Const CFG_MSG_DONE As String = "Tagesrückmeldungen vom %DATE% erfolgreich aktualisiert!"
+
+' =========================================================
+' GLOBALE WERTE FÜR USERFORM / SITZUNG
+' =========================================================
+Public gFormBestaetigt As Boolean
+Public gZielDatum As Date
+Public gSchichtEnde As Date
+Public gDefaultDatum As String
+Public gDefaultEndeFS As String
+
+' Merkt sich die letzte Eingabe solange Excel geöffnet ist
+Public gSitzungAktiv As Boolean
+Public gLetztesDatum As Date
+Public gLetzteSchichtEnde As Date
+
+' =========================================================
+' ÖFFENTLICHE MAKROS
+' =========================================================
+
+' Optional: falls ein Button nur die Eingabemaske öffnen soll
+Public Sub FT_Konfig_Oeffnen()
+    FT_PrepareFormDefaults
+    Tagesrückmeldungen1.Show
+End Sub
+
+' Optional: alter Makroname als Wrapper
+Public Sub FT_Tagesrueckmeldungen_aktualisieren()
+    Tagesrueckmeldungen_Start
+End Sub
+
+' Hauptmakro
+Public Sub Tagesrueckmeldungen_Start()
+
+    Dim session As Object
+    Dim ws As Worksheet
+
+    Dim arbeitsplaetze As Variant
+    Dim zielFrueh As Variant
+    Dim zielSpaet As Variant
+
+    Dim i As Long
+    Dim zeile As Long
+
+    Dim zielDatumText As String
+    Dim schichtGrenze As Long
+
+    Dim fruehCount As Long
+    Dim spaetCount As Long
+
+    Dim zeitText As String
+    Dim zeitWert As Long
+    Dim statusText As String
+    Dim datenVorhanden As Boolean
+
+    Dim errText As String
+
+    On Error GoTo fehler
+
+    ' -----------------------------------------------------
+    ' Standardwerte für UserForm vorbereiten
+    ' -----------------------------------------------------
+    FT_PrepareFormDefaults
+    gFormBestaetigt = False
+
+    Tagesrückmeldungen1.Show
+    If gFormBestaetigt = False Then Exit Sub
+
+    ' -----------------------------------------------------
+    ' Zielblatt = aktuelles Blatt
+    ' -----------------------------------------------------
+    Set ws = ActiveSheet
+
+    ' Neue Umgebung / neue Zielzellen
+    arbeitsplaetze = Array("E6", "E8", "E9")
+    zielFrueh = Array("H16", "H18", "H20")
+    zielSpaet = Array("L16", "L18", "L20")
+
+    zielDatumText = format$(gZielDatum, "dd.mm.yyyy")
+    schichtGrenze = CLng(format$(gSchichtEnde, "hhmm"))
+
+    application.ScreenUpdating = True
+    application.EnableEvents = False
+    application.StatusBar = "Verbindung zu SAP wird aufgebaut..."
+
+    FT_ClearTargetCells ws, zielFrueh
+    FT_ClearTargetCells ws, zielSpaet
+
+    ' -----------------------------------------------------
+    ' SAP Verbindung wie in der alten, funktionierenden Version
+    ' -----------------------------------------------------
+    Set session = FT_GetSapSession()
+    If session Is Nothing Then
+        MsgBox CFG_MSG_NO_SAP, vbCritical, "SAP"
+        GoTo SauberBeenden
+    End If
+
+    session.findById("wnd[0]").maximize
+    AppActivate application.Caption
+
+    session.findById("wnd[0]/tbar[0]/okcd").text = CFG_SAP_TRANSACTION
+    session.findById("wnd[0]").sendVKey 0
+
+    ' -----------------------------------------------------
+    ' Arbeitsplätze nacheinander auswerten
+    ' Logik bewusst wie im alten funktionierenden Makro
+    ' -----------------------------------------------------
+    For i = LBound(arbeitsplaetze) To UBound(arbeitsplaetze)
+
+        application.StatusBar = "Verarbeite: " & CStr(arbeitsplaetze(i)) & _
+                                " (" & (i + 1) & " von " & (UBound(arbeitsplaetze) + 1) & ")..."
+        DoEvents
+        
+        session.findById("wnd[0]/usr/ctxtPA_HIERA").SetFocus
+        session.findById("wnd[0]/usr/ctxtPA_HIERA").text = ""
+        
+        session.findById("wnd[0]/usr/ctxtSO_DATUM-LOW").text = zielDatumText
+        session.findById("wnd[0]/usr/ctxtPA_ARBPL").text = CStr(arbeitsplaetze(i))
+        session.findById("wnd[0]/tbar[1]/btn[8]").Press
+
+        fruehCount = 0
+        spaetCount = 0
+
+        statusText = FT_GetStatusBarText(session)
+        datenVorhanden = True
+
+        If InStr(1, statusText, "keine", vbTextCompare) > 0 _
+        Or InStr(1, statusText, "keine daten", vbTextCompare) > 0 _
+        Or InStr(1, statusText, "no data", vbTextCompare) > 0 _
+        Or InStr(1, statusText, "nicht vorhanden", vbTextCompare) > 0 Then
+            datenVorhanden = False
+        End If
+
+        If datenVorhanden Then
+            For zeile = CFG_FIRST_DATA_ROW To CFG_LAST_DATA_ROW
+
+                zeitText = ""
+
+                On Error Resume Next
+                zeitText = session.findById("wnd[0]/usr/lbl[" & CFG_SAP_TIME_LABEL_X & "," & zeile & "]").text
+                If Err.Number <> 0 Then
+                    zeitText = ""
+                    Err.Clear
+                End If
+                On Error GoTo fehler
+
+                ' Alte Logik:
+                ' Sobald leer -> Ende der Liste
+                If Trim$(zeitText) = "" Then Exit For
+
+                zeitWert = FT_ParseTimeToLong(zeitText)
+
+                If zeitWert > 0 Then
+                    ' WICHTIG:
+                    ' genau wie alt: < Grenze = Früh, sonst Spät
+                    If zeitWert < schichtGrenze Then
+                        fruehCount = fruehCount + 1
+                    Else
+                        spaetCount = spaetCount + 1
+                    End If
+                End If
+            Next zeile
+
+            ' Alte Logik:
+            ' Nur wenn Datenliste offen war, einmal zurück
+            On Error Resume Next
+            session.findById("wnd[0]/tbar[0]/btn[3]").Press
+            On Error GoTo fehler
+        End If
+
+        FT_WriteMergedValue ws, CStr(zielFrueh(i)), fruehCount
+        FT_WriteMergedValue ws, CStr(zielSpaet(i)), spaetCount
+
+        AppActivate application.Caption
+        DoEvents
+    Next i
+
+    On Error Resume Next
+    session.findById("wnd[0]").Iconify
+    On Error GoTo 0
+
+    MsgBox Replace(CFG_MSG_DONE, "%DATE%", zielDatumText), vbInformation, "Fertig"
+
+SauberBeenden:
+    application.StatusBar = False
+    application.ScreenUpdating = True
+    application.EnableEvents = True
+    Exit Sub
+
+fehler:
+    errText = "Nr. " & Err.Number & " - " & Err.Description
+
+    On Error Resume Next
+    If Not session Is Nothing Then session.findById("wnd[0]").Iconify
+    On Error GoTo 0
+
+    application.StatusBar = False
+    application.ScreenUpdating = True
+    application.EnableEvents = True
+
+    MsgBox "Makrofehler:" & vbCrLf & errText, vbCritical, "Makrofehler"
+End Sub
+
+' =========================================================
+' STANDARDWERTE FÜR FORM
+' =========================================================
+Private Sub FT_PrepareFormDefaults()
+
+    If gSitzungAktiv Then
+        gDefaultDatum = format$(gLetztesDatum, "dd.mm.yyyy")
+        gDefaultEndeFS = format$(gLetzteSchichtEnde, "hh:mm")
+    Else
+        If UCase$(Trim$(CFG_DEFAULT_DATE_MODE)) = "TODAY" Then
+            gDefaultDatum = format$(Date, "dd.mm.yyyy")
+        Else
+            gDefaultDatum = CFG_DEFAULT_FIXED_DATE
+        End If
+
+        gDefaultEndeFS = CFG_DEFAULT_SHIFT_END
+    End If
+End Sub
+
+' =========================================================
+' SAP VERBINDUNG
+' =========================================================
+Private Function FT_GetSapSession() As Object
+
+    Dim SapGuiAuto As Object
+    Dim sapApp As Object
+    Dim sapConnection As Object
+    Dim sapSession As Object
+
+    On Error Resume Next
+
+    Set SapGuiAuto = GetObject("SAPGUI")
+    If SapGuiAuto Is Nothing Then Exit Function
+
+    Set sapApp = SapGuiAuto.GetScriptingEngine
+    If sapApp Is Nothing Then Exit Function
+
+    Set sapConnection = sapApp.Children(0)
+    If sapConnection Is Nothing Then Exit Function
+
+    Set sapSession = sapConnection.Children(0)
+    If sapSession Is Nothing Then Exit Function
+
+    Set FT_GetSapSession = sapSession
+
+    On Error GoTo 0
+End Function
+
+Private Function FT_GetStatusBarText(ByVal session As Object) As String
+    On Error Resume Next
+    FT_GetStatusBarText = session.findById("wnd[0]/sbar").text
+    On Error GoTo 0
+End Function
+
+' =========================================================
+' ZEIT PARSEN
+' =========================================================
+Private Function FT_ParseTimeToLong(ByVal rawText As String) As Long
+
+    Dim txt As String
+    Dim teile() As String
+    Dim stunde As Long
+    Dim minute As Long
+    Dim digitsOnly As String
+
+    txt = Trim$(rawText)
+    If Len(txt) = 0 Then Exit Function
+
+    txt = Replace(txt, Chr$(160), " ")
+    txt = Replace(txt, vbTab, " ")
+    txt = Replace(txt, "Uhr", "", , , vbTextCompare)
+    txt = Replace(txt, ".", ":")
+    txt = Replace(txt, " ", "")
+
+    If InStr(txt, ":") > 0 Then
+        teile = Split(txt, ":")
+
+        If UBound(teile) < 1 Then Exit Function
+        If Not IsNumeric(teile(0)) Then Exit Function
+        If Not IsNumeric(teile(1)) Then Exit Function
+
+        stunde = CLng(teile(0))
+        minute = CLng(teile(1))
+
+        If stunde < 0 Or stunde > 23 Then Exit Function
+        If minute < 0 Or minute > 59 Then Exit Function
+
+        FT_ParseTimeToLong = CLng(format$(stunde, "00") & format$(minute, "00"))
+        Exit Function
+    End If
+
+    digitsOnly = FT_KeepDigits(txt)
+
+    Select Case Len(digitsOnly)
+        Case 3
+            stunde = CLng(Left$(digitsOnly, 1))
+            minute = CLng(Right$(digitsOnly, 2))
+        Case 4
+            stunde = CLng(Left$(digitsOnly, 2))
+            minute = CLng(Right$(digitsOnly, 2))
+        Case Else
+            Exit Function
+    End Select
+
+    If stunde < 0 Or stunde > 23 Then Exit Function
+    If minute < 0 Or minute > 59 Then Exit Function
+
+    FT_ParseTimeToLong = CLng(format$(stunde, "00") & format$(minute, "00"))
+End Function
+
+Private Function FT_KeepDigits(ByVal txt As String) As String
+
+    Dim i As Long
+    Dim ch As String
+    Dim result As String
+
+    result = ""
+
+    For i = 1 To Len(txt)
+        ch = Mid$(txt, i, 1)
+        If ch >= "0" And ch <= "9" Then
+            result = result & ch
+        End If
+    Next i
+
+    FT_KeepDigits = result
+End Function
+
+' =========================================================
+' EXCEL SCHREIBEN
+' =========================================================
+Private Sub FT_ClearTargetCells(ByVal ws As Worksheet, ByVal zielArray As Variant)
+
+    Dim zelle As Variant
+
+    For Each zelle In zielArray
+        ws.Range(CStr(zelle)).MergeArea.ClearContents
+    Next zelle
+End Sub
+
+Private Sub FT_WriteMergedValue(ByVal ws As Worksheet, ByVal zielAdresse As String, ByVal wert As Variant)
+    ws.Range(zielAdresse).MergeArea.Cells(1, 1).value = wert
+End Sub
+
